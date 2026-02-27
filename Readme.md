@@ -8,9 +8,9 @@ A modular Python toolkit for measuring MOSFET IV (current-voltage) characteristi
 
 | Instrument | Terminal | Role |
 |---|---|---|
-| Keithley 2400 SMU #1 | Drain | Forces V_DS, measures I_D |
-| Keithley 2400 SMU #2 | Source | Holds 0 V ground reference |
+| Keithley 2400 SMU | Drain | Forces V_DS, measures I_D |
 | Rigol DG822 Pro AWG | Gate | Supplies DC gate voltage V_GS |
+| Direct wire to ground | Source | Source pin tied to Keithley LO — no second SMU needed |
 
 ---
 
@@ -41,7 +41,7 @@ A modular Python toolkit for measuring MOSFET IV (current-voltage) characteristi
 When you run `python main.py`, the program:
 
 1. Opens a live **plottr** window on your screen
-2. Connects to all three instruments over GPIB and USB
+2. Connects to both instruments over GPIB and USB
 3. Runs an **output IV sweep** — for each gate voltage in `VGS_VALUES`, it sweeps the drain voltage from `VDS_START` to `VDS_STOP` and reads the drain current at each point
 4. Streams every measurement point to the live plot as it is taken — you watch the curves grow in real time
 5. Saves the complete results to `data/iv_results.npz` when the sweep finishes
@@ -59,41 +59,39 @@ The result is a **family of I_D vs V_DS curves**, one per gate voltage, which is
 ┌─────────────────────┐
 │   Rigol DG822 Pro   │
 │                     │
-│  CH1 OUTPUT ────────┼─────────────────── Gate  (G) ─┐
-│  CH1 GND    ────────┼──────────────┐                 │
-└─────────────────────┘              │                 │
-                                     │    ┌────────────┴────────┐
-┌─────────────────────┐              │    │                     │
-│  Keithley 2400 #1   │              │    │    N-channel MOSFET  │
-│  (DRAIN SMU)        │              │    │    (Device Under     │
-│                     │              │    │     Test / DUT)      │
-│  HI ────────────────┼──────────────┼────┤ Drain  (D)          │
-│  LO ────────────────┼──────────────┼────┤ Source (S)          │
-└─────────────────────┘              │    └─────────────────────┘
+│  CH1 OUTPUT ────────┼──────────────────────────── Gate   (G)
+│  CH1 GND    ────────┼──────────────┐
+└─────────────────────┘              │
+                                     │         ┌──────────────────────┐
+┌─────────────────────┐              └─────────┤ Source (S)           │
+│   Keithley 2400     │                        │                      │
+│   (DRAIN SMU)       │              ┌─────────┤ Drain  (D)           │
+│                     │              │         │   N-channel MOSFET   │
+│  HI ────────────────┼──────────────┘         │   (Device Under Test)│
+│  LO ────────────────┼──────────────┬─────────┤ Source (S)           │
+└─────────────────────┘              │         └──────────────────────┘
                                      │
-┌─────────────────────┐              │
-│  Keithley 2400 #2   │              │
-│  (SOURCE SMU)       │              │
-│                     │              │
-│  HI ────────────────┼──────────────┘   ← forced to 0 V
-│  LO ────────────────┼─────────────────── Chassis GND
-└─────────────────────┘
+                               Chassis GND
 ```
+
+> **Source is grounded directly** by shorting the MOSFET's Source pin to the Keithley LO terminal
+> (and the Rigol CH1 GND). No second SMU is needed.
 
 ### Connection Rules
 
 - **Gate → Rigol CH1 OUTPUT**: The gate draws essentially zero DC current, so a simple voltage source is sufficient. The Rigol in DC offset mode is ideal — clean, stable, and programmable.
-- **Drain → Keithley #1 HI**: This SMU forces V_DS and measures I_D simultaneously. The LO terminal connects to the source/ground.
-- **Source → Keithley #2 HI**: This SMU actively holds the source at 0 V throughout the sweep. Its LO terminal connects to chassis ground.
-- **All grounds must share a common point** at the MOSFET's source pin. The Rigol GND, both Keithley LO terminals, and the source pin all connect together.
+- **Drain → Keithley HI**: This SMU forces V_DS and measures I_D simultaneously.
+- **Source → Keithley LO + Rigol GND (common ground point)**: The MOSFET's source pin is wired directly to the shared ground. This makes the Keithley LO terminal the voltage reference for V_DS, and the Rigol GND the reference for V_GS — both are the same ground point, which is correct.
+- **All grounds must meet at the Source pin**: Keithley LO, Rigol CH1 GND, and the MOSFET Source pin all connect at a single point. Use short, low-resistance wires.
 
 ### Physical Cable Types
 
 | Connection | Recommended cable |
 |---|---|
 | Keithley HI to MOSFET drain | Triax or coax with BNC-to-probe adapter |
-| Keithley LO to source/ground | Short low-resistance wire |
-| Rigol CH1 to MOSFET gate | BNC-to-probe or low-capacitance coax |
+| Keithley LO to MOSFET source / chassis GND | Short low-resistance wire — keep it as short as possible |
+| Rigol CH1 GND to same ground point | Short wire to the same node as Keithley LO and MOSFET source |
+| Rigol CH1 OUTPUT to MOSFET gate | BNC-to-probe or low-capacitance coax |
 | Keithley to PC | GPIB-USB adapter (e.g. NI GPIB-USB-HS) |
 | Rigol to PC | USB-B cable (standard) |
 
@@ -101,8 +99,8 @@ The result is a **family of I_D vs V_DS curves**, one per gate voltage, which is
 
 The Keithley 2400 GPIB address is set on the instrument's front panel:
 - Press `MENU` → `COMMUNICATION` → `GPIB`
-- Set a unique address for each unit (e.g. 24 for drain, 25 for source)
-- The addresses in `main.py` must match what you set here
+- Set an address (e.g. 24) and note it down
+- The address in `main.py` (`DRAIN_ADDRESS`) must match what you set here
 
 ---
 
@@ -219,8 +217,7 @@ for address in rm.list_resources():
 ### Address Formats
 
 ```
-GPIB::24::INSTR                          ← Keithley on GPIB address 24
-GPIB::25::INSTR                          ← Keithley on GPIB address 25
+GPIB::24::INSTR                             ← Keithley on GPIB address 24
 USB0::0x1AB1::0x0643::DG8A241400001::INSTR  ← Rigol via USB
 ```
 
@@ -239,12 +236,10 @@ All measurement parameters live in the **CONFIG block** near the top of `main.py
 
 # VISA addresses — update to match your lab
 DRAIN_ADDRESS  = "GPIB::24::INSTR"
-SOURCE_ADDRESS = "GPIB::25::INSTR"
 GATE_ADDRESS   = "USB0::0x1AB1::0x0643::DG8XXXXXXXX::INSTR"
 
 # Safety limits
 DRAIN_COMPLIANCE  = 100e-3   # Amps  — max current allowed on drain
-SOURCE_COMPLIANCE = 10e-3    # Amps  — max current allowed on source
 GATE_V_LIMIT      = 10.0     # Volts — hard cap on V_GS (protects gate oxide)
 
 # Sweep parameters
@@ -264,11 +259,9 @@ OUTPUT_FILE = "data/iv_results.npz"
 
 | Parameter | What to set it to |
 |---|---|
-| `DRAIN_ADDRESS` | VISA address of the Keithley connected to the MOSFET drain |
-| `SOURCE_ADDRESS` | VISA address of the Keithley connected to the MOSFET source |
+| `DRAIN_ADDRESS` | VISA address of the Keithley — the single SMU connected to the MOSFET drain |
 | `GATE_ADDRESS` | VISA address of the Rigol DG822 Pro |
 | `DRAIN_COMPLIANCE` | Set to ~10–20% above the maximum I_D you expect. Default 100 mA is safe for most signal-level MOSFETs |
-| `SOURCE_COMPLIANCE` | Keep low (10 mA). The source should draw almost no current. A reading here means something is wrong |
 | `GATE_V_LIMIT` | Check your MOSFET datasheet for V_GS(max). Never exceed it. Default 10 V is conservative |
 | `VDS_START` | Almost always 0.0 V |
 | `VDS_STOP` | Check your MOSFET's V_DS(max). Typically 20–60 V for power MOSFETs, 5–10 V for small signal |
@@ -302,14 +295,14 @@ SETTLING_TIME     = 0.05
 
 ### Pre-flight checklist
 
-- [ ] All three instruments powered on and warmed up (allow 15 minutes for Keithley accuracy spec)
-- [ ] MOSFET wired correctly — Gate to Rigol, Drain to Keithley #1, Source to Keithley #2
-- [ ] All grounds connected to a common point at the Source pin
-- [ ] GPIB cable connected from both Keithleys to the GPIB-USB adapter
+- [ ] Both instruments powered on and warmed up (allow 15 minutes for Keithley accuracy spec)
+- [ ] MOSFET wired correctly — Gate to Rigol CH1, Drain to Keithley HI, Source directly to Keithley LO + Rigol GND
+- [ ] All grounds tied at a single point: Keithley LO, Rigol CH1 GND, and MOSFET Source pin
+- [ ] GPIB cable connected from Keithley to the GPIB-USB adapter
 - [ ] USB cable connected from Rigol to PC
 - [ ] VISA addresses confirmed (see [Finding Your VISA Addresses](#finding-your-visa-addresses))
 - [ ] CONFIG block in `main.py` updated with your addresses and sweep parameters
-- [ ] Compliance limits set safely for your specific MOSFET
+- [ ] Compliance limit set safely for your specific MOSFET
 
 ### Run
 
@@ -323,21 +316,19 @@ python main.py
 ```
 10:23:01 | INFO    | instruments.keithley | [drain] connecting at GPIB::24::INSTR
 10:23:02 | INFO    | instruments.keithley | [drain] connected
-10:23:02 | INFO    | instruments.keithley | [source] connecting at GPIB::25::INSTR
-10:23:03 | INFO    | instruments.keithley | [source] connected
-10:23:03 | INFO    | instruments.rigol    | [gate] connecting at USB0::...
-10:23:04 | INFO    | instruments.rigol    | [gate] connected
-10:23:04 | INFO    | main | ─────────────────────────────────────────────
-10:23:04 | INFO    | main | Output IV sweep started
-10:23:04 | INFO    | main |   V_DS : 0.0 → 5.0 V  (100 pts)
-10:23:04 | INFO    | main |   V_GS : [0.0, 1.0, 2.0, 3.0, 4.0]
-10:23:04 | INFO    | main | ─────────────────────────────────────────────
-10:23:04 | INFO    | main | Step 1/5  V_GS = 0.00 V
-10:23:10 | INFO    | main | Step 2/5  V_GS = 1.00 V
+10:23:02 | INFO    | instruments.rigol    | [gate] connecting at USB0::...
+10:23:03 | INFO    | instruments.rigol    | [gate] connected
+10:23:03 | INFO    | main | ─────────────────────────────────────────────
+10:23:03 | INFO    | main | Output IV sweep started
+10:23:03 | INFO    | main |   V_DS : 0.0 → 5.0 V  (100 pts)
+10:23:03 | INFO    | main |   V_GS : [0.0, 1.0, 2.0, 3.0, 4.0]
+10:23:03 | INFO    | main | ─────────────────────────────────────────────
+10:23:03 | INFO    | main | Step 1/5  V_GS = 0.00 V
+10:23:09 | INFO    | main | Step 2/5  V_GS = 1.00 V
 ...
-10:23:40 | INFO    | main | Sweep complete.
-10:23:40 | INFO    | main | Results saved → data/iv_results.npz
-10:23:40 | INFO    | main | Sweep done — close the plot window to exit.
+10:23:39 | INFO    | main | Sweep complete.
+10:23:39 | INFO    | main | Results saved → data/iv_results.npz
+10:23:39 | INFO    | main | Sweep done — close the plot window to exit.
 ```
 
 **On screen:** A plottr window opens and each IV curve appears point by point as the sweep progresses. After the sweep finishes, the complete family of curves is displayed and remains visible until you close the window.
@@ -418,7 +409,7 @@ from plottr.apps.autoplot import autoplot
 
 **Class:** `Keithley2400Controller`
 
-Controls a single Keithley 2400 SMU. Used twice in `main.py` — once as the drain SMU and once as the source SMU.
+Controls the Keithley 2400 SMU. Used once in `main.py` as the drain SMU. The MOSFET source is grounded directly via a wire to the LO terminal — no second instance needed.
 
 #### Constructor
 
@@ -428,7 +419,7 @@ Keithley2400Controller(name, address, compliance=100e-3)
 
 | Parameter | Type | Description |
 |---|---|---|
-| `name` | `str` | Unique label used internally by QCoDeS. Must be different for each instrument instance. E.g. `"drain"`, `"source"` |
+| `name` | `str` | Unique label used internally by QCoDeS. E.g. `"drain"` |
 | `address` | `str` | VISA resource string. E.g. `"GPIB::24::INSTR"` |
 | `compliance` | `float` | Current compliance limit in Amps. Default 100 mA. The SMU will never allow current to exceed this value |
 
@@ -553,9 +544,9 @@ The entry point and orchestration layer. Contains three sections: config, sweep 
 
 All measurement parameters as module-level constants (ALL_CAPS). Edit this section only — no other changes needed for typical experiments.
 
-#### `run_output_iv(drain, source, gate, plotter)`
+#### `run_output_iv(drain, gate, plotter)`
 
-The sweep function. Accepts the three instrument controllers and the plotter as arguments. Returns a `results` dictionary:
+The sweep function. Accepts the drain SMU, gate controller, and plotter as arguments. The source is grounded directly — it is not passed as an argument. Returns a `results` dictionary:
 
 ```python
 {
@@ -596,9 +587,9 @@ id_at_vgs2 = data["id_vgs_2p0"]   # I_D in Amps at V_GS = 2.0 V
 
 Wires everything together:
 1. Creates and starts the live plotter
-2. Opens all three instruments in a single `with` block
+2. Opens both instruments in a single `with` block (Keithley drain + Rigol gate)
 3. Calls `run_output_iv()` inside the `with` block
-4. `with` block exits → all instruments disconnect safely
+4. `with` block exits → both instruments disconnect safely
 5. Saves results to disk
 6. Calls `plotter.stop()` to keep the window open
 
@@ -658,7 +649,7 @@ plt.show()
 Add a new function to `main.py` following the same pattern as `run_output_iv()`, but swap which loop is inner and outer:
 
 ```python
-def run_transfer_iv(drain, source, gate, plotter):
+def run_transfer_iv(drain, gate, plotter):
     """Transfer IV sweep: I_D vs V_GS at fixed V_DS values."""
     vgs_array = np.linspace(0.0, 4.0, 100)
     vds_values = [0.5, 1.0, 2.0, 5.0]
@@ -754,9 +745,8 @@ python --version
 If below 3.10, either upgrade Python or rewrite the `with` block as nested statements:
 ```python
 with Keithley2400Controller("drain", DRAIN_ADDRESS, DRAIN_COMPLIANCE) as drain:
-    with Keithley2400Controller("source", SOURCE_ADDRESS, SOURCE_COMPLIANCE) as source:
-        with RigolDG822Controller("gate", GATE_ADDRESS, v_limit=GATE_V_LIMIT) as gate:
-            results = run_output_iv(drain, source, gate, plotter)
+    with RigolDG822Controller("gate", GATE_ADDRESS, v_limit=GATE_V_LIMIT) as gate:
+        results = run_output_iv(drain, gate, plotter)
 ```
 
 ---

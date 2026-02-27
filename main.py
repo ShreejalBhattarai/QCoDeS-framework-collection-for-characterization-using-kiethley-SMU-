@@ -7,8 +7,14 @@ Edit the CONFIG section below, then run:
 
     python main.py
 
+Hardware setup:
+  - Keithley 2400 HI  → MOSFET Drain
+  - Keithley 2400 LO  → MOSFET Source  (also ties to Rigol GND)
+  - Rigol DG822 CH1   → MOSFET Gate
+  - MOSFET Source     → directly wired to Keithley LO / chassis ground
+
 What it does:
-  1. Connects to both Keithley 2400s and the Rigol DG822 Pro
+  1. Connects to the Keithley 2400 and the Rigol DG822 Pro
   2. Opens a live plottr window
   3. Sweeps V_DS at each V_GS step, streaming every point to the plot
   4. Saves results to  data/iv_results.npz  when done
@@ -36,14 +42,12 @@ log = logging.getLogger("main")
 #  CONFIG  ← edit this section for your setup
 # ─────────────────────────────────────────────────────────────────── #
 
-# VISA addresses — TODO
+# VISA addresses — update to match your lab
 DRAIN_ADDRESS  = "GPIB::24::INSTR"
-SOURCE_ADDRESS = "GPIB::25::INSTR"
 GATE_ADDRESS   = "USB0::0x1AB1::0x0643::DG8XXXXXXXX::INSTR"
 
 # Safety limits
 DRAIN_COMPLIANCE  = 100e-3   # Amps
-SOURCE_COMPLIANCE = 10e-3    # Amps
 GATE_V_LIMIT      = 10.0     # Volts — hard cap on V_GS
 
 # Sweep parameters
@@ -63,14 +67,15 @@ OUTPUT_FILE = "data/iv_results.npz"
 #  SWEEP
 # ─────────────────────────────────────────────────────────────────── #
 
-def run_output_iv(drain, source, gate, plotter):
+def run_output_iv(drain, gate, plotter):
     """
     Output IV sweep: I_D vs V_DS at each V_GS.
 
+    Source is tied directly to ground (Keithley LO) — no second SMU needed.
+
     Parameters
     ----------
-    drain   : Keithley2400Controller — drain terminal
-    source  : Keithley2400Controller — source terminal (held at 0 V)
+    drain   : Keithley2400Controller — drain terminal (HI=drain, LO=source/gnd)
     gate    : RigolDG822Controller   — gate terminal
     plotter : LiveIVPlot             — live plot handle
 
@@ -86,9 +91,6 @@ def run_output_iv(drain, source, gate, plotter):
     log.info(f"  V_DS : {VDS_START} → {VDS_STOP} V  ({VDS_POINTS} pts)")
     log.info(f"  V_GS : {VGS_VALUES}")
     log.info("─" * 45)
-
-    # Source is always 0 V (ground reference)
-    source.set_voltage(0)
 
     for step, vgs in enumerate(VGS_VALUES, 1):
         log.info(f"Step {step}/{len(VGS_VALUES)}  V_GS = {vgs:.2f} V")
@@ -154,12 +156,11 @@ def main():
 
     # 2. Connect instruments — context managers guarantee safe shutdown
     with (
-        Keithley2400Controller("drain",  DRAIN_ADDRESS,  DRAIN_COMPLIANCE)  as drain,
-        Keithley2400Controller("source", SOURCE_ADDRESS, SOURCE_COMPLIANCE) as source,
-        RigolDG822Controller("gate",    GATE_ADDRESS,   v_limit=GATE_V_LIMIT) as gate,
+        Keithley2400Controller("drain", DRAIN_ADDRESS, DRAIN_COMPLIANCE) as drain,
+        RigolDG822Controller("gate",   GATE_ADDRESS,  v_limit=GATE_V_LIMIT) as gate,
     ):
         # 3. Run sweep
-        results = run_output_iv(drain, source, gate, plotter)
+        results = run_output_iv(drain, gate, plotter)
 
     # Instruments are now safely closed (context managers ran __exit__)
 
