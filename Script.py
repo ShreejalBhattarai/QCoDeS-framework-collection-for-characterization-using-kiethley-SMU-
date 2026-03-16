@@ -1,5 +1,4 @@
-import time
-import logging
+import time, logging
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -13,7 +12,7 @@ from qcodes.instrument import Instrument
 RigolDG1062Channel.waveform_translate.setdefault("DC", "DC")
 
 # ------------------------------------------------------------------ #
-#  CONFIG  ← only section you need to edit
+#  CONFIG 
 # ------------------------------------------------------------------ #
 
 DRAIN_ADDRESS    = "GPIB::24::INSTR"
@@ -21,11 +20,11 @@ GATE_ADDRESS     = "USB0::0x1AB1::0x0646::DG8Q279M00185::INSTR"
 
 DRAIN_COMPLIANCE = 100e-3   # A  — max drain current before SMU clamps
 GATE_V_LIMIT     = 10.0     # V  — hard cap on |V_GS| to protect gate oxide
-VDS_START        = 0.0      # V
-VDS_STOP         = 5      # V
+VDS_START        = 5.0      # V
+VDS_STOP         = 10.0      # V
 VDS_POINTS       = 100
 
-VGS_VALUES       = [0.0, 1.0, 2.0, 3.0, 4.0]   # V
+VGS_VALUES       = (4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0)   # V
 
 SETTLING_TIME    = 0.05     # s — wait after each voltage step
 
@@ -77,15 +76,6 @@ def run_sweep(drain: Keithley2400, gate: RigolDG1062) -> dict:
     gate_ch.apply(waveform="DC", freq=0.0, ampl=0.0, offset=0.0)
     gate.write(":OUTP1 ON")
 
-    # --- live matplotlib plot ------------------------------------------
-    plt.ion()
-    fig, ax = plt.subplots()
-    ax.set_xlabel("V_DS (V)")
-    ax.set_ylabel("I_D (mA)")
-    ax.set_title("MOSFET Output IV — live")
-    ax.grid(True)
-    curve_handles = {}
-
     log.info("=" * 55)
     log.info("Output IV sweep started")
     log.info(f"  V_DS : {VDS_START} → {VDS_STOP} V  ({VDS_POINTS} pts)")
@@ -107,8 +97,6 @@ def run_sweep(drain: Keithley2400, gate: RigolDG1062) -> dict:
         time.sleep(SETTLING_TIME)
 
         id_values  = []
-        vds_so_far = []
-
         abort_sweep = False
         for vds in vds_array:
             drain.volt(vds)        # QCoDeS param: set drain voltage
@@ -130,29 +118,6 @@ def run_sweep(drain: Keithley2400, gate: RigolDG1062) -> dict:
                     raise
 
             id_values.append(current)
-            vds_so_far.append(vds)
-
-        results["id"][vgs] = np.array(id_values)
-        if abort_sweep:
-            # don't attempt further V_GS values
-            break
-
-            # update live plot point-by-point
-            id_mA = np.array(id_values) * 1000.0
-            if vgs in curve_handles:
-                curve_handles[vgs].set_xdata(np.array(vds_so_far))
-                curve_handles[vgs].set_ydata(id_mA)
-            else:
-                (line,) = ax.plot(
-                    np.array(vds_so_far), id_mA,
-                    label=f"V_GS = {vgs:.1f} V"
-                )
-                curve_handles[vgs] = line
-                ax.legend(loc="upper left")
-            ax.relim()
-            ax.autoscale_view()
-            fig.canvas.draw()
-            fig.canvas.flush_events()
 
         results["id"][vgs] = np.array(id_values)
 
@@ -187,7 +152,6 @@ def save_results(results: dict) -> None:
 # ------------------------------------------------------------------ #
 
 def plot_final(results: dict) -> None:
-    plt.ioff()
     fig, ax = plt.subplots()
     for vgs in results["vgs_values"]:
         id_arr = results["id"].get(vgs, np.array([]))
